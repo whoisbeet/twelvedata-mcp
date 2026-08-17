@@ -1,14 +1,1 @@
-{
-  "functions": { "api/sse.ts": { "maxDuration": 30 }, "api/messages.ts": { "maxDuration": 30 } },
-  "rewrites": [
-    { "source": "/mcp", "destination": "/api/sse" },
-    { "source": "/sse", "destination": "/api/sse" },
-    { "source": "/messages", "destination": "/api/messages" },
-    { "source": "/", "destination": "/api/sse" }
-  ],
-  "headers": [{ "source": "/(mcp|sse|messages)?", "headers": [
-    { "key": "Access-Control-Allow-Origin", "value": "*" },
-    { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
-    { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Accept, MCP-Protocol-Version, Last-Event-ID" }
-  ] }]
-}
+{"functions":{"api/mcp.ts":{"maxDuration":30},"api/sse.ts":{"maxDuration":30},"api/messages.ts":{"maxDuration":30}},"rewrites":[{"source":"/mcp","destination":"/api/mcp"},{"source":"/sse","destination":"/api/sse"},{"source":"/messages","destination":"/api/messages"},{"source":"/","destination":"/api/mcp"}],"headers":[{"source":"/(mcp|sse|messages)?","headers":[{"key":"Access-Control-Allow-Origin","value":"*"},{"key":"Access-Control-Allow-Methods","value":"GET,POST,OPTIONS"},{"key":"Access-Control-Allow-Headers","value":"Content-Type,Accept,MCP-Protocol-Version,Last-Event-ID"}]}]}

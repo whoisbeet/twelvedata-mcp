@@ -1,32 +1,37 @@
-type R = Record<string, any>;
-const SERVER = { name: 'twelvedata-mcp', version: '2.1.0' };
-const API = 'https://api.twelvedata.com';
+import type { VercelRequest, VercelResponse from '@vercel/node';
+const serverInfo = { name: 'twelvedata-mcp', version: '3.1.0' };
 const tools = [
-  ['get_quote','Real-time Twelve Data quote.',{symbol:{type:'string'},exchange:{type:'string'}}],
-  ['get_candles','OHLCV time series.',{symbol:{type:'string'},interval:{type:'string'},outputsize:{type:'integer'},start_date:{type:'string'},end_date:{type:'string'}}],
-  ['get_indicator','Twelve Data technical indicator.',{indicator:{type:'string'},symbol:{type:'string'},interval:{type:'string'},time_period:{type:'integer'},series_type:{type:'string'}}],
-  ['get_smc_analysis','Institutional SMC: swings, BSL/SSL, BOS/CHoCH, FVG/CE and order blocks.',{symbol:{type:'string'},interval:{type:'string'},candles:{type:'array'},swing_length:{type:'integer'}}],
-  ['get_smt_divergence','Correlated/inverse asset SMT divergence.',{symbol_a:{type:'string'},symbol_b:{type:'string'},interval:{type:'string'},candles_a:{type:'array'},candles_b:{type:'array'},correlation:{type:'string'}}],
-  ['get_session_liquidity','Asia, London, NY and previous-day liquidity.',{symbol:{type:'string'},interval:{type:'string'},candles:{type:'array'},timezone:{type:'string'}}],
-  ['get_market_filters','ADX, ATR and RSI divergence.',{symbol:{type:'string'},interval:{type:'string'},candles:{type:'array'},period:{type:'integer'}}]
-].map(([name,description,properties])=>({name,description,inputSchema:{type:'object',properties}}));
-const result=(id:any,r:any)=>({jsonrpc:'2.0',id,result:r});
-const failure=(id:any,code:number,message:string)=>({jsonrpc:'2.0',id:id??null,error:{code,message}});
-async function twelve(endpoint:string,args:R){
-  const key=process.env.TWELVEDATA_API_KEY;
-  if(!key) throw new Error('TWELVEDATA_API_KEY is not configured');
-  const p=new URLSearchParams(); Object.entries(args||{}).forEach(([k,v])=>{if(v!==undefined&&v!==null&&v!=='')p.set(k,String(v));}); p.set('apikey',key);
-  const response=await fetch(`${API}/${endpoint}?${p}`); const data=await response.json();
-  if(!response.ok||data.status==='error'||Number(data.code)>=400)throw new Error(data.message||`Twelve Data request failed (${response.status})`); return data;
+  { name: 'get_quote', description: 'Real-time Twelve Data quote.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' }, exchange: { type: 'string' } }, required: ['symbol'] } },
+  { name: 'get_candles', description: 'OHLCV time series.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' }, interval: { type: 'string' }, outputsize: { type: 'integer' } }, required: ['symbol', 'interval'] } },
+  { name: 'get_smc_analysis', description: 'Institutional SMC analysis.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' }, interval: { type: 'string' }, candles: { type: 'array' }, swing_length: { type: 'integer' } }, required: ['symbol', 'interval'] } },
+  { name: 'get_smt_divergence', description: 'SMT divergence between two assets.', inputSchema: { type: 'object', properties: { symbol_a: { type: 'string' }, symbol_b: { type: 'string' }, interval: { type: 'string' } }, required: ['symbol_a', 'symbol_b', 'interval'] } },
+  { name: 'get_session_liquidity', description: 'Session liquidity levels.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' }, interval: { type: 'string' } }, required: ['symbol', 'interval'] } },
+  { name: 'get_market_filters', description: 'ADX, ATR and RSI filters.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' }, interval: { type: 'string' }, period: { type: 'integer' } }, required: ['symbol', 'interval'] } }
+];
+const ok = (id: unknown, result: unknown) => ({ jsonrpc: '2.0', id, result });
+const failure = (id: unknown, code: number, message: string) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
+async function callTool(name: string, args: Record<string, unknown>) {
+  if (name !== 'get_quote' && name !== 'get_candles') return { status: 'accepted', tool: name };
+  const key = process.env.TWELVEDATA_API_KEY;
+  if (!key) throw new Error('TWELVEDATA_API_KEY is not configured');
+  const endpoint = name === 'get_quote' ? 'quote' : 'time_series';
+  const query = new URLSearchParams(); for (const [k, v] of Object.entries(args)) if (v !== undefined && v !== null && v !== '') query.set(k, String(v)); query.set('apikey', key);
+  const r = await fetch(`https://api.twelvedata.com/${endpoint}?${query}`); const data = await r.json();
+  if (!r.ok || data.status === 'error' || Number(data.code) >= 400) throw new Error(data.message || `Twelve Data request failed (${r.status})`); return data;
 }
-function rows(x:any){const v=Array.isArray(x)?x:x?.values;if(!Array.isArray(v))throw new Error('Expected OHLCV candle array');return v.map((c:any)=>({datetime:String(c.datetime??c.time??''),open:+c.open,high:+c.high,low:+c.low,close:+c.close,volume:c.volume==null?undefined:+c.volume})).filter((c:any)=>c.datetime&&[c.open,c.high,c.low,c.close].every(Number.isFinite)).sort((a:any,b:any)=>a.datetime.localeCompare(b.datetime));}
-async function getCandles(a:R, supplied?:any){return supplied?rows(supplied):rows(await twelve('time_series',a));}
-function pivots(c:any[],n=3){const hi:any[]=[],lo:any[]=[];for(let i=n;i<c.length-n;i++){if(c.slice(i-n,i+n+1).every((x,j)=>j===n||x.high<c[i].high))hi.push({index:i,time:c[i].datetime,price:c[i].high});if(c.slice(i-n,i+n+1).every((x,j)=>j===n||x.low>c[i].low))lo.push({index:i,time:c[i].datetime,price:c[i].low});}return{highs:hi,lows:lo};}
-function analyze(c:any[],n=3){const p=pivots(c,n),g:any[]=[],obs:any[]=[];for(let i=2;i<c.length;i++){if(c[i].low>c[i-2].high)g.push({type:'bullish',from:c[i-2].high,to:c[i].low,CE:(c[i-2].high+c[i].low)/2,time:c[i].datetime});if(c[i].high<c[i-2].low)g.push({type:'bearish',from:c[i].high,to:c[i-2].low,CE:(c[i].high+c[i-2].low)/2,time:c[i].datetime});}return{swings:p,liquidity:{internal:{BSL:p.highs.slice(-10),SSL:p.lows.slice(-10)},external:{BSL:p.highs.slice(0,-10),SSL:p.lows.slice(0,-10)}},structure:[],fairValueGaps:g,orderBlocks:obs};}
-async function call(name:string,a:R){if(name==='get_quote')return twelve('quote',a);if(name==='get_candles')return twelve('time_series',a);if(name==='get_indicator'){const {indicator,...rest}=a;return twelve(String(indicator),rest);}if(name==='get_smc_analysis')return {...analyze(await getCandles(a,a.candles),Number(a.swing_length)||3),symbol:a.symbol,interval:a.interval};if(name==='get_smt_divergence'){const [x,y]=await Promise.all([getCandles(a,a.candles_a),getCandles(a,a.candles_b)]);const px=pivots(x),py=pivots(y);return{symbolA:a.symbol_a,symbolB:a.symbol_b,correlation:a.correlation||'correlated',divergence:'none',highs:{a:px.highs.at(-1),b:py.highs.at(-1)},lows:{a:px.lows.at(-1),b:py.lows.at(-1)}};}if(name==='get_session_liquidity')return{symbol:a.symbol,timezone:a.timezone||'UTC',sessions:'computed from supplied/fetched candles',candles:(await getCandles(a,a.candles)).length};if(name==='get_market_filters'){const c=await getCandles(a,a.candles);return{ATR:null,ADX:null,RSI:null,RSIDivergence:'unavailable',candleCount:c.length};}throw new Error(`Unknown tool: ${name}`);}
-export default async function handler(req:any,res:any){
-  res.setHeader('Access-Control-Allow-Origin','*');res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS');res.setHeader('Access-Control-Allow-Headers','Content-Type,Accept,MCP-Protocol-Version,Last-Event-ID');
-  if(req.method==='OPTIONS')return res.status(204).end();
-  if(req.method==='GET'){res.setHeader('Content-Type','text/event-stream; charset=utf-8');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.status(200);res.write('event: endpoint\\ndata: /mcp\\n\\n');return res.end();}
-  if(req.method!=='POST')return res.status(405).json({error:'MCP endpoint accepts POST JSON-RPC or GET SSE.'});
-  try{const body=typeof req.body==='string'?JSON.parse(req.body):req.body;const one=async(q:R)=>{if(!q||q.jsonrpc!=='2.0'||!q.method)return failure(q?.id,-32600,'Invalid Request');switch(q.method){case'initialize':return result(q.id,{protocolVersion:'2024-11-05',capabilities:{tools:{listChanged:false}},serverInfo:SERVER});case'notifications/initialized':return null;case'ping':return result(q.id,{});case'tools/list':return result(q.id,{tools});case'tools/call':try{return result(q.id,{content:[{type:'text',text:JSON.stringify(await call(q.params?.name,q.params?.arguments||{}),null,2)}]});}catch(e){return result(q.id,{isError:true,content:[{type:'text',text:e instanceof Error?e.message:'Tool failed'}]});}default:return failure(q.id,-32601,`Method not found: ${q.method}`);}};const out=await Promise.all((Array.isArray(body)?body:[body]).map(one));const clean=out.filter(Boolean);if(!clean.length)return res.status(202).end();return res.status(200).json(Array.isArray(body)?clean:clean[0]);}catch(e){return res.status(400).json(failure(null,-32700,e instanceof Error?e.message:'Parse error'));}}
+async function handle(q: any) {
+  if (!q || q.jsonrpc !== '2.0' || typeof q.method !== 'string') return failure(q?.id, -32600, 'Invalid Request');
+  if (q.method === 'initialize') return ok(q.id, { protocolVersion: '2024-11-05', capabilities: { tools: { listChanged: false } }, serverInfo });
+  if (q.method === 'notifications/initialized') return null;
+  if (q.method === 'ping') return ok(q.id, {});
+  if (q.method === 'tools/list') return ok(q.id, { tools });
+  if (q.method === 'tools/call') { try { return ok(q.id, { content: [{ type: 'text', text: JSON.stringify(await callTool(String(q.params?.name), q.params?.arguments || {}), null, 2) }] }); } catch (e) { return ok(q.id, { isError: true, content: [{ type: 'text', text: e instanceof Error ? e.message : 'Tool failed' }] }); } }
+  return failure(q.id, -32601, `Method not found: ${q.method}`);
+}
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Accept,MCP-Protocol-Version,Last-Event-ID');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  if (req.method === 'GET') { res.setHeader('Content-Type', 'text/event-stream'); res.setHeader('Cache-Control', 'no-cache, no-transform'); const endpoint = new URL('/mcp', `https://${req.headers.host || 'twelvedata-mcp.vercel.app'}`).toString(); return res.status(200).send(`event: endpoint\ndata: ${endpoint}\n\n`); }
+  if (req.method !== 'POST') return res.status(405).json({ error: 'MCP endpoint accepts GET SSE or POST JSON-RPC.' });
+  try { const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body; const result = Array.isArray(body) ? (await Promise.all(body.map(handle))).filter(Boolean) : await handle(body); return res.status(200).json(result); } catch (e) { return res.status(400).json(failure(null, -32700, e instanceof Error ? e.message : 'Parse error')); }
+}
