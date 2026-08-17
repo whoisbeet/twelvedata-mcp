@@ -1,0 +1,8 @@
+{
+  "name": "twelvedata-mcp",
+  "version": "1.0.0",
+  "private": false,
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": { "dev": "vercel dev" }
+}
