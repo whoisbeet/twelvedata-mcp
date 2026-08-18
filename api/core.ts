@@ -5,6 +5,10 @@ export type KeyContext = { env?: NodeJS.ProcessEnv; headers?: Record<string, str
 const TD = 'https://api.twelvedata.com';
 const FH = 'https://finnhub.io/api/v1';
 
+function normalizeSymbol(input: unknown): string {
+  return String(input ?? '').trim().toUpperCase();
+}
+
 export const toolDefs = [
   { name: 'get_quote', description: 'Real-time Twelve Data quote.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' }, exchange: { type: 'string' } }, required: ['symbol'] } },
   { name: 'get_candles', description: 'OHLCV time series.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' }, interval: { type: 'string' }, outputsize: { type: 'integer' } }, required: ['symbol', 'interval'] } },
@@ -35,7 +39,11 @@ function apiKey(kind: 'twelve' | 'finnhub', ctx: KeyContext = {}) {
 async function request(base: string, endpoint: string, args: Args, key: string) {
   const q = new URLSearchParams(); for (const [k, v] of Object.entries(args)) if (v !== undefined && v !== null && v !== '') q.set(k, String(v));
   q.set(base === TD ? 'apikey' : 'token', key);
-  const r = await fetch(`${base}/${endpoint}?${q}`);
+  const url = `${base}/${endpoint}?${q}`;
+  console.log(`[market-data] ${base === TD ? 'Twelve Data' : 'Finnhub'} ${endpoint}`, {
+    url: url.replace(/([?&](?:apikey|token)=)[^&]+/, '$1[redacted]'),
+  });
+  const r = await fetch(url);
   const raw = await r.text();
   let data: any;
   try { data = raw ? JSON.parse(raw) : null; } catch {
@@ -61,11 +69,11 @@ function indicators(values: any[]) {
 }
 export async function callTool(name: string, args: Args, ctx: KeyContext = {}) {
   if (!toolDefs.some(t => t.name === name)) throw new Error(`Unknown tool: ${name}`);
-  if (name === 'get_quote') return twelve('quote', args, ctx); if (name === 'get_candles') return twelve('time_series', args, ctx);
+  if (name === 'get_quote') return twelve('quote', {...args, symbol: normalizeSymbol(args.symbol)}, ctx); if (name === 'get_candles') return twelve('time_series', {...args, symbol: normalizeSymbol(args.symbol)}, ctx);
   const fhMap: Record<string,string> = { finnhub_get_economic_calendar:'calendar/economic', finnhub_get_market_holiday:'stock/market-holiday', finnhub_get_news_sentiment:'news-sentiment', finnhub_get_market_news:'news', finnhub_get_insider_sentiment:'stock/insider-sentiment', finnhub_get_insider_transactions:'stock/insider-transactions', finnhub_get_quote:'quote', finnhub_get_pattern_recognition:'scan/pattern-recognition', finnhub_get_support_resistance:'scan/support-resistance' };
-  if (fhMap[name]) return finnhub(fhMap[name], args, ctx);
+  if (fhMap[name]) return finnhub(fhMap[name], args.symbol === undefined ? args : {...args, symbol: normalizeSymbol(args.symbol)}, ctx);
   if (name === 'get_market_confluence') {
-    const symbol = value(args,'symbol')!, interval = value(args,'interval')!, now = new Date(); const to = value(args,'to') || now.toISOString().slice(0,10); const from = value(args,'from') || new Date(now.getTime()-7*86400000).toISOString().slice(0,10);
+    const symbol = normalizeSymbol(args.symbol), interval = value(args,'interval')!, now = new Date(); const to = value(args,'to') || now.toISOString().slice(0,10); const from = value(args,'from') || new Date(now.getTime()-7*86400000).toISOString().slice(0,10);
     const results = await Promise.allSettled([
       twelve('time_series',{symbol,interval,outputsize:value(args,'outputsize') || 200},ctx),
       twelve('quote',{symbol},ctx),
