@@ -35,8 +35,19 @@ function apiKey(kind: 'twelve' | 'finnhub', ctx: KeyContext = {}) {
 async function request(base: string, endpoint: string, args: Args, key: string) {
   const q = new URLSearchParams(); for (const [k, v] of Object.entries(args)) if (v !== undefined && v !== null && v !== '') q.set(k, String(v));
   q.set(base === TD ? 'apikey' : 'token', key);
-  const r = await fetch(`${base}/${endpoint}?${q}`); const data = await r.json() as any;
-  if (!r.ok || data.status === 'error' || Number(data.code) >= 400 || data.error) throw new Error(data.message || data.error || `${base === TD ? 'Twelve Data' : 'Finnhub'} request failed (${r.status})`);
+  const r = await fetch(`${base}/${endpoint}?${q}`);
+  const raw = await r.text();
+  let data: any;
+  try { data = raw ? JSON.parse(raw) : null; } catch {
+    const preview = raw.replace(/\s+/g, ' ').trim().slice(0, 200);
+    throw new Error(`${base === TD ? 'Twelve Data' : 'Finnhub'} returned a non-JSON response (HTTP ${r.status}${preview ? `: ${preview}` : ''}).`);
+  }
+  if (!r.ok || data?.status === 'error' || Number(data?.code) >= 400 || data?.error) {
+    const message = data?.message || data?.error || `HTTP ${r.status}`;
+    const accessDenied = r.status === 403 || /you don't have access to this resource|access denied|premium/i.test(String(message));
+    if (base === FH && accessDenied) throw new Error(`Finnhub resource '${endpoint}' requires Finnhub Premium or is not available for this API key (HTTP ${r.status}): ${message}`);
+    throw new Error(`${base === TD ? 'Twelve Data' : 'Finnhub'} request failed (HTTP ${r.status}): ${message}`);
+  }
   return data;
 }
 export const twelve = (endpoint: string, args: Args, ctx?: KeyContext) => request(TD, endpoint, args, apiKey('twelve', ctx));
@@ -51,12 +62,24 @@ function indicators(values: any[]) {
 export async function callTool(name: string, args: Args, ctx: KeyContext = {}) {
   if (!toolDefs.some(t => t.name === name)) throw new Error(`Unknown tool: ${name}`);
   if (name === 'get_quote') return twelve('quote', args, ctx); if (name === 'get_candles') return twelve('time_series', args, ctx);
-  const fhMap: Record<string,string> = { finnhub_get_economic_calendar:'calendar/economic', finnhub_get_market_holiday:'stock/market-holiday', finnhub_get_news_sentiment:'news-sentiment', finnhub_get_market_news:'news', finnhub_get_insider_sentiment:'stock/insider-sentiment', finnhub_get_insider_transactions:'stock/insider-transactions', finnhub_get_quote:'quote', finnhub_get_pattern_recognition:'scan/technical-indicator', finnhub_get_support_resistance:'stock/support-resistance' };
+  const fhMap: Record<string,string> = { finnhub_get_economic_calendar:'calendar/economic', finnhub_get_market_holiday:'stock/market-holiday', finnhub_get_news_sentiment:'news-sentiment', finnhub_get_market_news:'news', finnhub_get_insider_sentiment:'stock/insider-sentiment', finnhub_get_insider_transactions:'stock/insider-transactions', finnhub_get_quote:'quote', finnhub_get_pattern_recognition:'scan/pattern-recognition', finnhub_get_support_resistance:'scan/support-resistance' };
   if (fhMap[name]) return finnhub(fhMap[name], args, ctx);
   if (name === 'get_market_confluence') {
     const symbol = value(args,'symbol')!, interval = value(args,'interval')!, now = new Date(); const to = value(args,'to') || now.toISOString().slice(0,10); const from = value(args,'from') || new Date(now.getTime()-7*86400000).toISOString().slice(0,10);
-    const [candles, tdQuote, sentiment, macro, fhQuote] = await Promise.all([twelve('time_series',{symbol,interval,outputsize:value(args,'outputsize') || 200},ctx), twelve('quote',{symbol},ctx), finnhub('news-sentiment',{symbol},ctx), finnhub('calendar/economic',{from,to},ctx), finnhub('quote',{symbol},ctx)]);
-    const values = Array.isArray(candles?.values) ? candles.values : []; return { tool:name, symbol, interval, twelve_data:{ quote:tdQuote, candles:values, indicators:indicators(values) }, finnhub:{ quote:fhQuote, newsSentiment:sentiment, macroEvents:macro }, generatedAt:new Date().toISOString() };
+    const results = await Promise.allSettled([
+      twelve('time_series',{symbol,interval,outputsize:value(args,'outputsize') || 200},ctx),
+      twelve('quote',{symbol},ctx),
+      finnhub('news-sentiment',{symbol},ctx),
+      finnhub('calendar/economic',{from,to},ctx),
+      finnhub('quote',{symbol},ctx),
+    ]);
+    const [candlesResult, tdQuoteResult, sentimentResult, macroResult, fhQuoteResult] = results;
+    const succeeded = <T>(result: PromiseSettledResult<T>) => result.status === 'fulfilled' ? result.value : undefined;
+    const failed = (label: string, result: PromiseSettledResult<unknown>) => result.status === 'rejected' ? { metric: label, unavailable: true, reason: result.reason instanceof Error ? result.reason.message : String(result.reason) } : undefined;
+    const candles = succeeded(candlesResult) as any;
+    const unavailable = [failed('Finnhub news sentiment', sentimentResult), failed('Finnhub economic calendar', macroResult)].filter(Boolean);
+    const values = Array.isArray(candles?.values) ? candles.values : [];
+    return { tool:name, symbol, interval, twelve_data:{ quote:succeeded(tdQuoteResult), candles:values, indicators:indicators(values) }, finnhub:{ quote:succeeded(fhQuoteResult), newsSentiment:succeeded(sentimentResult), macroEvents:succeeded(macroResult) }, unavailableMetrics:unavailable, generatedAt:new Date().toISOString() };
   }
   throw new Error(`Unsupported tool: ${name}`);
 }
