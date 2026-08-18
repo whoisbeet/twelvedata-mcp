@@ -1,1 +1,1 @@
-{"version":2,"functions":{"api/mcp.ts":{"maxDuration":60}},"routes":[{"src":"/mcp","dest":"/api/mcp"}]}
+{"version":2,"functions":{"api/*.ts":{"maxDuration":60}},"routes":[{"src":"/mcp","dest":"/api/mcp"}]}
