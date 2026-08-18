@@ -1,54 +1,31 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { callTool, toolDefs } from './core.js';
 
 export const sessions = new Map<string, SSEServerTransport>();
-const API = 'https://api.twelvedata.com';
-const toolDefs = [
-  { name: 'get_quote', description: 'Real-time Twelve Data quote.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' }, exchange: { type: 'string' } }, required: ['symbol'] } },
-  { name: 'get_candles', description: 'OHLCV time series.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' }, interval: { type: 'string' }, outputsize: { type: 'integer' } }, required: ['symbol', 'interval'] } },
-  { name: 'get_smc_analysis', description: 'Institutional SMC analysis: swings, liquidity, BOS/CHoCH, FVG/CE and order blocks.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' }, interval: { type: 'string' }, candles: { type: 'array' }, swing_length: { type: 'integer' } }, required: ['symbol', 'interval'] } },
-  { name: 'get_smt_divergence', description: 'SMT divergence between two assets.', inputSchema: { type: 'object', properties: { symbol_a: { type: 'string' }, symbol_b: { type: 'string' }, interval: { type: 'string' } }, required: ['symbol_a', 'symbol_b', 'interval'] } },
-  { name: 'get_session_liquidity', description: 'Asia, London, New York and previous-day liquidity.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' }, interval: { type: 'string' } }, required: ['symbol', 'interval'] } },
-  { name: 'get_market_filters', description: 'ADX, ATR and RSI divergence filters.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' }, interval: { type: 'string' }, period: { type: 'integer' } }, required: ['symbol', 'interval'] } }
-];
-
-async function twelve(endpoint: string, args: Record<string, unknown>) {
-  const key = process.env.TWELVEDATA_API_KEY;
-  if (!key) throw new Error('TWELVEDATA_API_KEY is not configured');
-  const q = new URLSearchParams();
-  for (const [k, v] of Object.entries(args)) {
-    if (v !== undefined && v !== null && v !== '') q.set(k, String(v));
-  }
-  q.set('apikey', key);
-  const response = await fetch(`${API}/${endpoint}?${q}`);
-  const data = await response.json() as { status?: string; code?: number; message?: string };
-  if (!response.ok || data.status === 'error' || Number(data.code) >= 400) {
-    throw new Error(data.message || `Twelve Data request failed (${response.status})`);
-  }
-  return data;
-}
 
 export function createServer() {
   const server = new Server(
-    { name: 'twelvedata-mcp', version: '3.0.0' },
+    { name: 'twelvedata-mcp', version: '4.0.0' },
     { capabilities: { tools: {} } }
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: toolDefs }));
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: toolDefs as any }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args = {} } = request.params;
     try {
-      let data: unknown;
-      if (name === 'get_quote') {
-        data = await twelve('quote', args as Record<string, unknown>);
-      } else if (name === 'get_candles') {
-        data = await twelve('time_series', args as Record<string, unknown>);
-      } else {
-        data = { status: 'accepted', tool: name, note: 'Analysis uses the supplied or Twelve Data candle series.' };
-      }
+      const data = await callTool(
+        name,
+        args as Record<string, unknown>,
+        { env: process.env }
+      );
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
     } catch (error) {
-      return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : 'Tool failed' }] };
+      return {
+        isError: true,
+        content: [{ type: 'text', text: error instanceof Error ? error.message : 'Tool failed' }]
+      };
     }
   });
   return server;
