@@ -1,9 +1,9 @@
 {
   "name": "twelvedata-mcp",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "private": false,
   "type": "module",
   "engines": { "node": ">=18" },
   "dependencies": { "@modelcontextprotocol/sdk": "^1.17.5", "zod": "^3.25.76" },
-  "scripts": { "dev": "vercel dev", "typecheck": "tsc --noEmit" }
+  "scripts": { "dev": "vercel dev", "typecheck": "tsc --noEmit", "build": "tsc --noEmit" }
 }
